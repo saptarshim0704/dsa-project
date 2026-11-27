@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BufferStack — Two-Stack Undo/Redo Engine &amp; Memory Debugger</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Workbench Toolbar -->
+    <header class="topbar" role="banner">
+      <div class="topbar-left">
+        <div class="brand" title="Two-Stack Command Pattern Workbench">
+          <svg class="brand-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="2" y="2" width="12" height="3" rx="0.75" stroke="currentColor" stroke-width="1.4"/>
+            <rect x="2" y="6.5" width="12" height="3" rx="0.75" stroke="currentColor" stroke-width="1.4"/>
+            <rect x="2" y="11" width="12" height="3" rx="0.75" stroke="currentColor" stroke-width="1.4"/>
+          </svg>
+          <span class="brand-name">BufferStack</span>
+          <span class="brand-sub">Two-Stack Undo/Redo</span>
+        </div>
+
+        <span class="divider-v" aria-hidden="true"></span>
+
+        <div class="file-pill" title="Active in-memory buffer">
+          <span class="file-dot" id="dirtyDot" aria-hidden="true"></span>
+          <input id="fileNameInput" class="file-name-input" type="text" value="scratchpad.txt" aria-label="Document filename" spellcheck="false">
+          <span class="badge-mono" id="opComplexityBadge" title="Time complexity of last stack operation">O(1)</span>
+        </div>
+      </div>
+
+      <div class="topbar-center">
+        <div class="control-group">
+          <label class="inline-select" title="Load a preset demonstration sequence">
+            <span class="label-xs">Preset</span>
+            <select id="presetSelect" aria-label="Load preset scenario">
+              <option value="">Load scenario…</option>
+              <option value="code">Code Refactoring (6 ops)</option>
+              <option value="branch">Undo + Redo Branch Prune</option>
+              <option value="overflow">Ring Eviction (Limit Stress)</option>
+              <option value="prose">Technical Note Drafting</option>
+            </select>
+          </label>
+
+          <label class="inline-select" title="Maximum entries per stack (MAX_STACK)">
+            <span class="label-xs">Cap</span>
+            <select id="limitSelect" aria-label="Stack capacity limit">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+
+          <label class="toggle-chip" title="Group rapid consecutive typing into word-level undo frames (like VS Code / Sublime). Turn off for strict per-keystroke DSA frames.">
+            <input type="checkbox" id="coalesceToggle" checked>
+            <span class="toggle-track" aria-hidden="true"></span>
+            <span>Coalesce typing</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="toolbar-actions">
+          <button id="findToggleBtn" class="tool-btn" type="button" title="Find and Replace (Ctrl+F)">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span>Find</span>
+          </button>
+
+          <button id="importBtn" class="tool-btn" type="button" title="Import .txt file into buffer">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v8m0 0L5 7m3 3l3-3M2.5 11.5v2h11v-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Import</span>
+          </button>
+          <input type="file" id="fileImportInput" accept=".txt,.md,.c,.js,.json,.log,text/*" hidden>
+
+          <button id="exportTxtBtn" class="tool-btn" type="button" title="Download buffer as .txt (Ctrl+S)">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 10V2m0 0L5 5m3-3l3 3M2.5 11.5v2h11v-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Export .txt</span>
+          </button>
+
+          <button id="exportJsonBtn" class="tool-btn" type="button" title="Export full stack state &amp; audit trace as JSON">
+            <span>Trace .json</span>
+          </button>
+
+          <span class="divider-v" aria-hidden="true"></span>
+
+          <button id="themeBtn" class="tool-btn icon-only" type="button" title="Switch Light / Dark theme" aria-label="Toggle theme">
+            <svg id="themeIconSun" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <svg id="themeIconMoon" viewBox="0 0 16 16" fill="none" aria-hidden="true" hidden><path d="M13.5 9.8A5.5 5.5 0 0 1 6.2 2.5a5.8 5.8 0 1 0 7.3 7.3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          </button>
+
+          <button id="helpBtn" class="tool-btn icon-only" type="button" title="Keyboard shortcuts &amp; Engine Reference (?)" aria-label="Shortcuts and help">
+            <span>?</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workbench Grid -->
+    <main class="workbench">
+      <!-- Left Column: Interactive Document Editor & Command Strip -->
+      <section class="pane editor-pane" aria-labelledby="editorHeading">
+        <div class="pane-header">
+          <div class="pane-title-wrap">
+            <h1 id="editorHeading" class="pane-title">Document Buffer</h1>
+            <span class="pane-meta" id="docMetrics">0 chars · 1 line · 0 words · 0 B</span>
+          </div>
+
+          <div class="history-controls">
+            <button id="undoAllBtn" class="btn btn-sm" type="button" title="Undo all frames back to initial empty state">
+              <span>|&lt;&lt; Undo All</span>
+            </button>
+            <button id="undoBtn" class="btn btn-sm btn-undo" type="button" title="Undo top action (Ctrl+Z)">
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.5 4.5L2.5 7.5l3 3M3 7.5h6.5a4 4 0 0 1 0 8H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Undo</span>
+              <kbd>Ctrl+Z</kbd>
+            </button>
+            <button id="redoBtn" class="btn btn-sm btn-redo" type="button" title="Redo top action (Ctrl+Y or Ctrl+Shift+Z)">
+              <span>Redo</span>
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10.5 4.5l3 3-3 3M13 7.5H6.5a4 4 0 0 0 0 8H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <kbd>Ctrl+Y</kbd>
+            </button>
+            <button id="redoAllBtn" class="btn btn-sm" type="button" title="Redo all frames">
+              <span>Redo All &gt;&gt;|</span>
+            </button>
+            <button id="replayBtn" class="btn btn-sm" type="button" title="Animate playback through Undo/Redo history">
+              <span id="replayLabel">▶ Replay</span>
+            </button>
+            <button id="clearBtn" class="btn btn-sm btn-ghost-danger" type="button" title="Clear document, stacks, and logs">
+              <span>Reset</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline Find & Replace Bar -->
+        <div id="findBar" class="find-bar" hidden>
+          <div class="find-inputs">
+            <label class="sr-only" for="findInput">Find text</label>
+            <input id="findInput" type="text" placeholder="Find…" autocomplete="off" spellcheck="false">
+            <span id="findCount" class="find-count">0 matches</span>
+            <label class="sr-only" for="replaceInput">Replace with</label>
+            <input id="replaceInput" type="text" placeholder="Replace with…" autocomplete="off" spellcheck="false">
+            <label class="check-inline">
+              <input id="findCaseCheck" type="checkbox">
+              <span>Aa</span>
+            </label>
+          </div>
+          <div class="find-actions">
+            <button id="findPrevBtn" class="btn btn-xs" type="button" title="Previous match">Prev</button>
+            <button id="findNextBtn" class="btn btn-xs" type="button" title="Next match">Next</button>
+            <button id="replaceOneBtn" class="btn btn-xs" type="button">Replace</button>
+            <button id="replaceAllBtn" class="btn btn-xs btn-primary" type="button">Replace All</button>
+            <button id="findCloseBtn" class="btn btn-xs" type="button" aria-label="Close find bar">✕</button>
+          </div>
+        </div>
+
+        <!-- Live Code/Text Editor Surface with Line Gutter -->
+        <div class="editor-surface-wrap">
+          <div id="lineGutter" class="line-gutter" aria-hidden="true">1</div>
+          <textarea
+            id="docEditor"
+            class="doc-editor"
+            spellcheck="false"
+            placeholder="Start typing directly here, paste text, or use the deterministic command bar below…"
+            aria-label="Document buffer editor"
+          ></textarea>
+        </div>
+
+        <!-- Next Undo / Redo Peek Preview Bar -->
+        <div class="peek-strip" aria-live="polite">
+          <div class="peek-slot undo-peek">
+            <span class="peek-label">peek(undo):</span>
+            <code id="peekUndoText" class="peek-val">— empty —</code>
+          </div>
+          <div class="peek-slot redo-peek">
+            <span class="peek-label">peek(redo):</span>
+            <code id="peekRedoText" class="peek-val">— empty —</code>
+          </div>
+        </div>
+
+        <!-- Deterministic DSA Command Strip (parity with undo_redo.c + cursor-aware ops) -->
+        <div class="command-strip">
+          <div class="command-row">
+            <div class="cmd-group grow">
+              <label class="cmd-field">
+                <span class="cmd-label">Insert payload</span>
+                <input id="textInput" type="text" placeholder="Text to insert (Enter to execute)…" autocomplete="off">
+              </label>
+              <label class="cmd-field compact">
+                <span class="cmd-label">Target</span>
+                <select id="insertTargetSelect" aria-label="Insertion position">
+                  <option value="cursor">At cursor</option>
+                  <option value="end">Append to end</option>
+                  <option value="newline">New line at end</option>
+                </select>
+              </label>
+              <button id="addBtn" class="btn btn-primary" type="button">Push INSERT</button>
+            </div>
+
+            <div class="cmd-group">
+              <label class="cmd-field narrow">
+                <span class="cmd-label">Delete chars</span>
+                <input id="delInput" type="number" min="1" value="1">
+              </label>
+              <label class="cmd-field compact">
+                <span class="cmd-label">From</span>
+                <select id="delTargetSelect" aria-label="Deletion direction">
+                  <option value="end">From end</option>
+                  <option value="cursor">Before cursor</option>
+                </select>
+              </label>
+              <button id="delBtn" class="btn btn-danger" type="button">Push DELETE</button>
+            </div>
+          </div>
+
+          <div class="quick-transforms" aria-label="Atomic buffer transforms">
+            <span class="label-xs">Atomic transforms:</span>
+            <button id="txUpperBtn" class="btn btn-xs" type="button" title="Uppercase selected text (or whole buffer)">UPPERCASE</button>
+            <button id="txLowerBtn" class="btn btn-xs" type="button" title="Lowercase selected text (or whole buffer)">lowercase</button>
+            <button id="txTrimBtn" class="btn btn-xs" type="button" title="Trim trailing spaces on every line">Trim Trailing</button>
+            <button id="txSortLinesBtn" class="btn btn-xs" type="button" title="Sort lines alphabetically">Sort Lines</button>
+            <button id="txIndentBtn" class="btn btn-xs" type="button" title="Indent lines by 2 spaces">Indent +2</button>
+            <button id="txCommentBtn" class="btn btn-xs" type="button" title="Insert timestamp note at cursor">+ Timestamp</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Dual Stack Visualizer -->
+      <aside class="pane stacks-pane" aria-label="Undo and Redo Stacks">
+        <div class="stacks-grid">
+          <!-- Undo Stack Column -->
+          <section class="stack-panel undo-panel" aria-labelledby="undoStackHeading">
+            <div class="stack-header">
+              <div class="stack-title-row">
+                <span class="stack-dot undo"></span>
+                <h2 id="undoStackHeading">Undo Stack</h2>
+                <span id="undoCount" class="count-pill">0 / 50</span>
+              </div>
+              <span class="ptr-badge">top = <strong id="undoTopIdx">-1</strong></span>
+            </div>
+
+            <div class="cap-bar" title="Undo stack occupancy">
+              <div id="undoCapFill" class="cap-fill undo" style="width: 0%"></div>
+            </div>
+
+            <div id="undoListWrap" class="stack-scroll">
+              <ul id="undoList" class="stack-list" aria-label="Undo stack frames"></ul>
+              <div class="stack-floor">index -1 (base / empty)</div>
+            </div>
+
+            <p class="stack-hint">LIFO · New edits &amp; Redo push to <code>top</code>. Click any frame to inspect or jump.</p>
+          </section>
+
+          <!-- Redo Stack Column -->
+          <section class="stack-panel redo-panel" aria-labelledby="redoStackHeading">
+            <div class="stack-header">
+              <div class="stack-title-row">
+                <span class="stack-dot redo"></span>
+                <h2 id="redoStackHeading">Redo Stack</h2>
+                <span id="redoCount" class="count-pill">0 / 50</span>
+              </div>
+              <span class="ptr-badge">top = <strong id="redoTopIdx">-1</strong></span>
+            </div>
+
+            <div class="cap-bar" title="Redo stack occupancy">
+              <div id="redoCapFill" class="cap-fill redo" style="width: 0%"></div>
+            </div>
+
+            <div id="redoWarnBanner" class="branch-warn" hidden>
+              <span>⚠ <strong id="redoWarnCount">0</strong> redo frame(s) will be pruned on next new edit.</span>
+            </div>
+
+            <div id="redoListWrap" class="stack-scroll">
+              <ul id="redoList" class="stack-list" aria-label="Redo stack frames"></ul>
+              <div class="stack-floor">index -1 (base / empty)</div>
+            </div>
+
+            <p class="stack-hint">LIFO · Filled by Undo. Cleared when a new edit creates a timeline branch.</p>
+          </section>
+        </div>
+
+        <!-- Selected Frame Inspector -->
+        <section class="frame-inspector" aria-labelledby="inspectorHeading">
+          <div class="inspector-head">
+            <h3 id="inspectorHeading">Frame Inspector</h3>
+            <span id="inspectorBadge" class="badge-mono">No frame selected</span>
+          </div>
+          <div id="inspectorBody" class="inspector-body">
+            <p class="inspector-empty">Click any frame in either stack to inspect its offset, byte delta, escaped payload, and jump directly to that revision.</p>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <!-- Bottom Engineering Drawer (Audit Log, Memory Telemetry, C Reference, Timeline Graph) -->
+    <section class="drawer" aria-label="Engineering Diagnostics">
+      <div class="drawer-tabs" role="tablist">
+        <button class="tab-btn active" role="tab" aria-selected="true" data-tab="logTab" id="tabBtnLog">
+          Operation Audit Log <span id="logCountBadge" class="tab-count">0</span>
+        </button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="telemetryTab" id="tabBtnTelemetry">
+          Memory &amp; Complexity
+        </button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="cRefTab" id="tabBtnCRef">
+          C Engine Mapping (<code>undo_redo.c</code>)
+        </button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="timelineTab" id="tabBtnTimeline">
+          Branch &amp; History Graph
+        </button>
+
+        <div class="drawer-spacer"></div>
+        <button id="drawerCollapseBtn" class="btn btn-xs" type="button" title="Collapse / Expand diagnostics drawer">▾ Collapse</button>
+      </div>
+
+      <div class="drawer-body" id="drawerBody">
+        <!-- Tab 1: Audit Log -->
+        <div id="logTab" class="tab-panel active" role="tabpanel">
+          <div class="panel-toolbar">
+            <div class="filter-pills">
+              <button class="filter-pill active" data-log-filter="all" type="button">All</button>
+              <button class="filter-pill" data-log-filter="EDIT" type="button">Edits</button>
+              <button class="filter-pill" data-log-filter="UNDO" type="button">Undo</button>
+              <button class="filter-pill" data-log-filter="REDO" type="button">Redo</button>
+              <button class="filter-pill" data-log-filter="SYSTEM" type="button">System / Evict</button>
+            </div>
+            <button id="clearLogBtn" class="btn btn-xs" type="button">Clear log</button>
+          </div>
+          <div class="table-wrap">
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Time</th>
+                  <th>Event</th>
+                  <th>Operation</th>
+                  <th>Offset</th>
+                  <th>Payload Delta</th>
+                  <th>undoTop</th>
+                  <th>redoTop</th>
+                  <th>Cost</th>
+                </tr>
+              </thead>
+              <tbody id="auditTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 2: Memory & Complexity Telemetry -->
+        <div id="telemetryTab" class="tab-panel" role="tabpanel" hidden>
+          <div class="telemetry-grid">
+            <div class="metric-card">
+              <div class="metric-label">Delta Stack Footprint (Actual)</div>
+              <div class="metric-value" id="memDeltaBytes">0 B</div>
+              <div class="metric-sub" id="memDeltaDetail">0 frames across both stacks</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Naive Full-Snapshot Cost</div>
+              <div class="metric-value" id="memSnapshotBytes">0 B</div>
+              <div class="metric-sub">If each frame copied the whole document</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Memory Saved by Action Deltas</div>
+              <div class="metric-value accent-good" id="memSavedPct">0%</div>
+              <div class="metric-sub" id="memSavedBytes">0 B saved</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Evictions &amp; Pruned Branches</div>
+              <div class="metric-value" id="memEvictStats">0 / 0</div>
+              <div class="metric-sub">Capacity evictions / Redo branches cleared</div>
+            </div>
+          </div>
+
+          <div class="memory-compare-wrap">
+            <div class="compare-row">
+              <span class="compare-label">Delta Storage vs Snapshot Storage</span>
+              <span class="compare-ratio" id="compareRatioText">0 B / 0 B</span>
+            </div>
+            <div class="compare-bars">
+              <div class="bar-track">
+                <div id="deltaBarFill" class="bar-fill delta" style="width: 0%"></div>
+              </div>
+              <div class="bar-track">
+                <div id="snapBarFill" class="bar-fill snap" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="complexity-table">
+              <div><code>push(s, a)</code> — <strong>O(1)</strong> amortized (<code>O(MAX_STACK)</code> when shifting oldest on overflow; <code>O(1)</code> with ring buffer)</div>
+              <div><code>pop(s)</code> — <strong>O(1)</strong> pointer decrement (<code>s-&gt;top--</code>)</div>
+              <div><code>peek(s)</code> — <strong>O(1)</strong> direct index read (<code>&amp;s-&gt;items[s-&gt;top]</code>)</div>
+              <div><code>clearRedo()</code> — <strong>O(1)</strong> pointer reset (<code>redoStack.top = -1</code>)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: C Reference Mapping -->
+        <div id="cRefTab" class="tab-panel" role="tabpanel" hidden>
+          <div class="cref-layout">
+            <div class="cref-sidebar">
+              <h4>Active C Call Trace</h4>
+              <p class="cref-desc">Every operation in the workbench maps directly to the C dual-stack implementation in <code>undo_redo.c</code>.</p>
+              <div id="cActiveCallBox" class="c-call-box">
+                <div class="c-call-fn">init(&amp;undoStack); init(&amp;redoStack);</div>
+                <div class="c-call-note">Waiting for first edit…</div>
+              </div>
+              <div class="c-struct-dump">
+                <div class="c-struct-title">Live C Struct Mirror</div>
+                <pre id="cStructPre">Stack undoStack = { .top = -1 };
+Stack redoStack = { .top = -1 };
+char  text[MAX_TEXT] = "";</pre>
+              </div>
+            </div>
+            <div class="cref-code-wrap">
+              <pre id="cCodeListing" class="c-code-listing"></pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: Branch & History Graph -->
+        <div id="timelineTab" class="tab-panel" role="tabpanel" hidden>
+          <div class="panel-toolbar">
+            <span class="pane-meta">Linear active revision chain + pruned redo branches created when editing after an Undo.</span>
+            <span id="branchStatsBadge" class="badge-mono">1 branch · 0 pruned</span>
+          </div>
+          <div id="timelineCanvas" class="timeline-canvas"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom IDE Status Bar -->
+    <footer class="statusbar" role="status" aria-live="polite">
+      <div class="status-left">
+        <span id="statusIndicator" class="status-dot ok"></span>
+        <span id="statusText">Ready. Type directly or use commands to push actions onto the Undo stack.</span>
+      </div>
+      <div class="status-right">
+        <span id="cursorPosStatus">Ln 1, Col 1 (Offset 0)</span>
+        <span class="sep">│</span>
+        <span id="selectionStatus">Sel 0</span>
+        <span class="sep">│</span>
+        <span id="stackSummaryStatus">Undo: 0 · Redo: 0 / Cap 50</span>
+        <span class="sep">│</span>
+        <span>UTF-8 · LF</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Keyboard Shortcuts & Reference Modal -->
+  <div id="helpModal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="helpModalTitle">Workbench Shortcuts &amp; Architecture</h2>
+        <button id="helpCloseBtn" class="btn btn-xs" type="button" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="shortcut-grid">
+          <div class="sc-item"><kbd>Ctrl + Z</kbd><span>Undo top frame (pop Undo → push Redo)</span></div>
+          <div class="sc-item"><kbd>Ctrl + Y</kbd><span>Redo top frame (pop Redo → push Undo)</span></div>
+          <div class="sc-item"><kbd>Ctrl + Shift + Z</kbd><span>Alternate Redo shortcut</span></div>
+          <div class="sc-item"><kbd>Ctrl + F</kbd><span>Open inline Find &amp; Replace</span></div>
+          <div class="sc-item"><kbd>Ctrl + S</kbd><span>Export document buffer as <code>.txt</code></span></div>
+          <div class="sc-item"><kbd>Enter</kbd><span>Execute Insert payload in command bar</span></div>
+          <div class="sc-item"><kbd>?</kbd><span>Open this reference (outside text inputs)</span></div>
+          <div class="sc-item"><kbd>Esc</kbd><span>Close Find bar or modal</span></div>
+        </div>
+        <div class="arch-note">
+          <h3>How the Two-Stack Engine Works</h3>
+          <p>Unlike naive snapshot history (which copies the full document on every edit), this engine stores compact <strong>action deltas</strong>: <code>{ type, offset, inserted, deleted }</code>. Reversing an <code>INSERT</code> removes <code>inserted.length</code> characters at <code>offset</code>; reversing a <code>DELETE</code> re-inserts <code>deleted</code> at <code>offset</code>; reversing a <code>REPLACE</code> swaps <code>inserted</code> back to <code>deleted</code>.</p>
+          <p>Click any stack frame in the right panel to inspect its raw delta or <strong>time-travel</strong> directly to that revision by executing sequential O(1) pops/pushes.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
